@@ -1,13 +1,13 @@
 package neoe.zim;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
 import java.io.DataInputStream;
-import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,18 +30,32 @@ public class Zim {
 	public ArrayList<String> mMIMETypeList;
 	public long checksumPos;
 	public long geoIndexPos;
-	private Map<Integer, Entry> entryCache = new HashMap<Integer, Entry>();
+	private Map<Integer, Entry> titleCache = new HashMap<Integer, Entry>();
+	private Map<Integer, Entry> urlCache = new HashMap<Integer, Entry>();
 	private String url;
+	RandomAccessFile f;
+	LittleEndianDataInput leu;
 
 	public Zim(String fn) throws Exception {
+		initFile(fn);
+		readHeader(f);
+	}
+
+	private void initFile(String fn) throws FileNotFoundException {
 		this.fn = fn;
-		readHeader(new RandomAccessFile(fn, "r"));
+		f = new RandomAccessFile(fn, "r");
+		leu = new LittleEndianDataInput(f);
+	}
+
+	public void closeFile() throws IOException {
+		if (f != null)
+			f.close();
 	}
 
 	public Zim(String url, boolean network) throws Exception {
 		if (!network) {
-			this.fn = url;
-			readHeader(new RandomAccessFile(fn, "r"));
+			initFile(fn);
+			readHeader(f);
 		} else {
 			this.url = url;
 			// currently, only support readHeader for ZIM file on web
@@ -91,14 +105,17 @@ public class Zim {
 		layoutPage = in.readInt();
 		System.out.println(layoutPage);
 		checksumPos = in.readLong();
-		geoIndexPos = in.readLong();
+		if (mimeListPos >= 88) {
+			geoIndexPos = in.readLong();
+		}
 		// Initialise the MIMETypeList
 		if (url != null) {
 			return;
 		}
+		f.seek(mimeListPos);
 		mMIMETypeList = new ArrayList<String>();
 		while (true) {
-			String s = readString(in);
+			String s = U.toStr(U.readString(in));
 			if (s.isEmpty()) {
 				break;
 			}
@@ -108,26 +125,13 @@ public class Zim {
 
 	}
 
-	public static String readString(DataInput in) throws IOException {
-		ByteArrayOutputStream ba = new ByteArrayOutputStream();
-		while (true) {
-			byte c = in.readByte();
-			if (c == 0) {
-				break;
-			}
-			ba.write(c);
-		}
-		String s = ba.toString("UTF8");
-		return s;
-	}
+	public List<String> getTitlesNear(int pos, int cnt) {
 
-	public List<String> findTitle(int pos, int cnt) {
-
-		List<String> ret = new ArrayList();
+		List<String> ret = new ArrayList<>();
 		for (int i = pos; i < pos + cnt; i++) {
 			if (i >= articleCount || i < 0)
 				break;
-			ret.add(getEntry(i).title);
+			ret.add(U.toStr(getEntryByTitleIndex(i).title));
 		}
 		return ret;
 	}
@@ -135,10 +139,56 @@ public class Zim {
 	public int findTitlePos(String s) {
 		if (s == null || s.length() == 0)
 			return 0;
-		return binarySearchForNearIndex(s, 0, articleCount - 1);
+		return searchNearestTitle(U.toBs(s), 0, articleCount - 1);
 	}
 
-	private int binarySearchForNearIndex(String s, int i, int j) {
+	public int findUrlPos(String s) {
+		if (s == null || s.length() == 0)
+			return 0;
+		return searchUrl(U.toBs(s), 0, articleCount - 1);
+	}
+
+	private int searchUrl(byte[] s, int i, int j) {
+		if (i > j)
+			return -1;
+		if (i == j) {
+			return urlEq(i, s) ? i : -1;
+		}
+		if (urlEq(i, s))
+			return i;
+		if (urlEq(j, s))
+			return j;
+
+		if (j - i == 1) {
+			return -1;
+		}
+		int k = (i + j) / 2;
+		if (k == i)
+			k++;
+		if (k > j)
+			return -1;
+
+		{
+			Entry a = getEntryByUrlIndex(k);
+			int v = U.bsCompareTo(s, a.url);
+			if (v == 0)
+				return k;
+			if (v < 0) {
+				return searchUrl(s, i + 1, k - 1);
+			}
+			if (v > 0) {
+				return searchUrl(s, k + 1, j - 1);
+			}
+		}
+		return -1;
+	}
+
+	private boolean urlEq(int i, byte[] bs) {
+		Entry a = getEntryByUrlIndex(i);
+		return Arrays.equals(a.url, bs);
+	}
+
+	private int searchNearestTitle(byte[] s, int i, int j) {
 
 		if (i > j)
 			return i;
@@ -155,28 +205,28 @@ public class Zim {
 		int k = (i + j) / 2;
 
 		if (isLargeEq(k, s, false)) {
-			return binarySearchForNearIndex(s, i, k);
+			return searchNearestTitle(s, i, k);
 		} else {
-			return binarySearchForNearIndex(s, k, j);
+			return searchNearestTitle(s, k, j);
 		}
 	}
 
-	private boolean isSmallEq(int pos, String s, boolean canEmpty) {
-		Entry e = getEntry(pos);
-		if (e.title.length() == 0) {
+	private boolean isSmallEq(int pos, byte[] s, boolean canEmpty) {
+		Entry e = getEntryByTitleIndex(pos);
+		if (e.title.length == 0) {
 			if (!canEmpty) {
 				throw new RuntimeException("not here");
 			} else {
 				return false;
 			}
 		}
-		int v = e.title.compareTo(s);
+		int v = U.bsCompareTo(e.title, s);
 		return v <= 0;
 	}
 
-	private boolean isLargeEq(int pos, String s, boolean canEmpty) {
-		Entry e = getEntry(pos);
-		if (e.title.length() == 0) {
+	private boolean isLargeEq(int pos, byte[] s, boolean canEmpty) {
+		Entry e = getEntryByTitleIndex(pos);
+		if (e.title.length == 0) {
 			if (!canEmpty) {
 				// throw new RuntimeException("pos="+pos);
 				return true;
@@ -185,45 +235,46 @@ public class Zim {
 			}
 		}
 
-		int v = e.title.compareTo(s);
+		int v = U.bsCompareTo(e.title, s);
 		return v >= 0;
 	}
 
-	public Entry getEntry(int pos) {
-		Entry e = entryCache.get(pos);
+	public Entry getEntryByTitleIndex(int titleIndex) {
+		Entry e = titleCache.get(titleIndex);
 		if (e == null) {
-			e = _getEntry(pos);
-			entryCache.put(pos, e);
+			try {
+				f.seek(titlePtrPos + titleIndex * 4);
+				e = getEntryByUrlIndex(leu.readInt());
+			} catch (IOException e1) {
+				e1.printStackTrace();
+				return null;
+			}
+			titleCache.put(titleIndex, e);
 		}
 		return e;
 	}
 
-	private Entry _getEntry(int pos) {
-		try {
-			RandomAccessFile f = new RandomAccessFile(fn, "r");
-			LittleEndianDataInput leu = new LittleEndianDataInput(f);
-			seekTitle(f, leu, pos);
-			Entry e = new Entry(pos, leu, this);
-			f.close();
-			return e;
-		} catch (Exception e) {
-			throw new RuntimeException(e);
+	public Entry getEntryByUrlIndex(int urlIndex) {
+		Entry e = urlCache.get(urlIndex);
+		if (e == null) {
+			try {
+				f.seek(urlPtrPos + urlIndex * 8);
+				f.seek(leu.readLong());
+				e = new Entry(urlIndex, this);
+			} catch (IOException e1) {
+				e1.printStackTrace();
+				return null;
+			}
+			urlCache.put(urlIndex, e);
 		}
-
+		return e;
 	}
 
-	public void seekTitle(RandomAccessFile f, LittleEndianDataInput leu, int pos) throws IOException {
-		long tp = titlePtrPos + pos * 4;
-		f.seek(tp);
-		int tpv = leu.readInt();
-		seekURL(f, leu, tpv);
-	}
-
-	public void seekURL(RandomAccessFile f, LittleEndianDataInput leu, int urlIndex) throws IOException {
-		long up = urlPtrPos + urlIndex * 8;
-		f.seek(up);
-		long upv = leu.readLong();
-		f.seek(upv);
+	public byte[] getContent(int urlIndex) {
+		if (urlIndex < 0)
+			return null;
+		// TODO
+		return null;
 	}
 
 }

@@ -2,11 +2,10 @@ package neoe.zim;
 
 import java.io.DataInput;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 
 public class Entry {
 
-	public String title, url;
+	public byte[] title, url;
 	public short mimetype;
 	public int type;
 	public byte namespace;
@@ -14,10 +13,10 @@ public class Entry {
 	public int redirectIndex;
 	public int cluster;
 	public int blob;
-	private int pos;
+	private int urlIndex;
 	private Zim zim;
 
-	private void read(DataInput f) throws IOException {
+	private void readEntry(DataInput f) throws IOException {
 		mimetype = f.readShort();
 		if (mimetype == (short) 0xffff) {
 			type = 1;
@@ -26,8 +25,11 @@ public class Entry {
 			namespace = f.readByte();
 			revision = f.readInt();
 			redirectIndex = f.readInt();
-			url = Zim.readString(f);
-			title = Zim.readString(f);
+			url = U.toBs(String.format("%s/%s", (char) namespace, U.toStr(U.readString(f))));
+			title = U.readString(f);
+			if (title.length == 0) {
+				title = url;
+			}
 		} else if (mimetype == (short) 0xfffe) {
 			type = 2;
 			throw new RuntimeException("found Linktarget or deleted Entry");
@@ -39,9 +41,11 @@ public class Entry {
 			revision = f.readInt();
 			cluster = f.readInt();
 			blob = f.readInt();
-			url = Zim.readString(f);
-			title = Zim.readString(f);
-
+			url = U.toBs(String.format("%s/%s", (char) namespace, U.toStr(U.readString(f))));
+			title = U.readString(f);
+			if (title.length == 0) {
+				title = url;
+			}
 		}
 		if (Zim.debugEntry) {
 			System.out.println(toString());
@@ -51,26 +55,17 @@ public class Entry {
 
 	public String toString() {
 		if (type == 1) {
-			String redirect;
-			try {
-				RandomAccessFile f = new RandomAccessFile(zim.fn, "r");
-				LittleEndianDataInput leu = new LittleEndianDataInput(f);
-				zim.seekURL(f, leu, redirectIndex);
-				redirect = new Entry(pos, leu, zim).toString();
-			} catch (IOException e) {
-				e.printStackTrace();
-				redirect = e.toString();
-			}
-			return String.format("(%s)`%s`[%s]->%s", pos, title, url, redirect);
+			return String.format("(%s)`%s`[%s]->%s", urlIndex, U.toStr(title), U.toStr(url),
+					zim.getEntryByUrlIndex(redirectIndex));
 		} else {
-			return String.format("(%s)`%s`[%s]", pos, title, url);
+			return String.format("(%s)`%s`[%s]", urlIndex, U.toStr(title), U.toStr(url));
 		}
 	}
 
-	public Entry(int pos, LittleEndianDataInput leu, Zim zim) throws IOException {
+	public Entry(int urlIndex, Zim zim) throws IOException {
 		this.zim = zim;
-		this.pos = pos;
-		read(leu);
+		this.urlIndex = urlIndex;
+		readEntry(zim.leu);
 	}
 
 }
