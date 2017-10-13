@@ -1,5 +1,6 @@
 package neoe.zim;
 
+import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -89,15 +90,15 @@ public class Zim {
 	}
 
 	public static String readString(DataInput in) throws IOException {
-		StringBuffer sb = new StringBuffer();
+		ByteArrayOutputStream ba = new ByteArrayOutputStream();
 		while (true) {
-			char c = in.readChar();
+			byte c = in.readByte();
 			if (c == 0) {
 				break;
 			}
-			sb.append(c);
+			ba.write(c);
 		}
-		String s = sb.toString();
+		String s = ba.toString("UTF8");
 		return s;
 	}
 
