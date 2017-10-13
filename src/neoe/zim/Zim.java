@@ -1,7 +1,9 @@
 package neoe.zim;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
+import java.io.DataInputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -29,18 +31,31 @@ public class Zim {
 	public long checksumPos;
 	public long geoIndexPos;
 	private Map<Integer, Entry> entryCache = new HashMap<Integer, Entry>();
+	private String url;
 
 	public Zim(String fn) throws Exception {
 		this.fn = fn;
-		readHeader();
+		readHeader(new RandomAccessFile(fn, "r"));
+	}
+
+	public Zim(String url, boolean network) throws Exception {
+		if (!network) {
+			this.fn = url;
+			readHeader(new RandomAccessFile(fn, "r"));
+		} else {
+			this.url = url;
+			// currently, only support readHeader for ZIM file on web
+			readHeader(new DataInputStream(new ByteArrayInputStream(U.download(url, 88))));
+		}
+
 	}
 
 	static final long I4 = (1L << 32) - 1;
 
-	private void readHeader() throws Exception {
+	private void readHeader(DataInput in0) throws Exception {
 
 		//
-		LittleEndianDataInput in = new LittleEndianDataInput(new RandomAccessFile(fn, "r"));
+		LittleEndianDataInput in = new LittleEndianDataInput(in0);
 
 		// Read the contents of the header
 		magicNumber = in.readInt();
@@ -53,7 +68,7 @@ public class Zim {
 		// System.out.println(uuid); read(buffer, 0, 4);
 
 		articleCount = in.readInt();
-		System.out.println(articleCount);
+		System.out.println("count:" + articleCount);
 
 		clusterCount = in.readInt();
 		System.out.println(clusterCount);
@@ -78,6 +93,9 @@ public class Zim {
 		checksumPos = in.readLong();
 		geoIndexPos = in.readLong();
 		// Initialise the MIMETypeList
+		if (url != null) {
+			return;
+		}
 		mMIMETypeList = new ArrayList<String>();
 		while (true) {
 			String s = readString(in);
