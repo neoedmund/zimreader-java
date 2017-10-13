@@ -2,6 +2,7 @@ package neoe.zim;
 
 import java.io.DataInput;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 
 public class Entry {
 
@@ -14,6 +15,7 @@ public class Entry {
 	public int cluster;
 	public int blob;
 	private int pos;
+	private Zim zim;
 
 	private void read(DataInput f) throws IOException {
 		mimetype = f.readShort();
@@ -41,14 +43,32 @@ public class Entry {
 			title = Zim.readString(f);
 
 		}
+		if (Zim.debugEntry) {
+			System.out.println(toString());
+		}
 
 	}
 
 	public String toString() {
-		return String.format("(%s),t%s,`%s`[%s]", pos, type, title, url);
+		if (type == 1) {
+			String redirect;
+			try {
+				RandomAccessFile f = new RandomAccessFile(zim.fn, "r");
+				LittleEndianDataInput leu = new LittleEndianDataInput(f);
+				zim.seekURL(f, leu, redirectIndex);
+				redirect = new Entry(pos, leu, zim).toString();
+			} catch (IOException e) {
+				e.printStackTrace();
+				redirect = e.toString();
+			}
+			return String.format("(%s)`%s`[%s]->%s", pos, title, url, redirect);
+		} else {
+			return String.format("(%s)`%s`[%s]", pos, title, url);
+		}
 	}
 
-	public Entry(int pos, LittleEndianDataInput leu) throws IOException {
+	public Entry(int pos, LittleEndianDataInput leu, Zim zim) throws IOException {
+		this.zim = zim;
 		this.pos = pos;
 		read(leu);
 	}

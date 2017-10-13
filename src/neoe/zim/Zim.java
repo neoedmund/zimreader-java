@@ -12,6 +12,7 @@ import java.util.Map;
 
 public class Zim {
 
+	public static boolean debugEntry;
 	public int articleCount;
 	public String fn;
 	public int magicNumber;
@@ -183,20 +184,28 @@ public class Zim {
 		try {
 			RandomAccessFile f = new RandomAccessFile(fn, "r");
 			LittleEndianDataInput leu = new LittleEndianDataInput(f);
-			long tp = titlePtrPos + pos * 4;
-			f.seek(tp);
-			int tpv = leu.readInt();
-			long up = urlPtrPos + tpv * 8;
-			f.seek(up);
-			long upv = leu.readLong();
-			f.seek(upv);
-			Entry e = new Entry(pos, leu);
+			seekTitle(f, leu, pos);
+			Entry e = new Entry(pos, leu, this);
 			f.close();
 			return e;
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		}
 
+	}
+
+	public void seekTitle(RandomAccessFile f, LittleEndianDataInput leu, int pos) throws IOException {
+		long tp = titlePtrPos + pos * 4;
+		f.seek(tp);
+		int tpv = leu.readInt();
+		seekURL(f, leu, tpv);
+	}
+
+	public void seekURL(RandomAccessFile f, LittleEndianDataInput leu, int urlIndex) throws IOException {
+		long up = urlPtrPos + urlIndex * 8;
+		f.seek(up);
+		long upv = leu.readLong();
+		f.seek(upv);
 	}
 
 }

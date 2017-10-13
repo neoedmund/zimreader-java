@@ -27,8 +27,8 @@ public class NeoeZimTest {
 		}
 		out.close();
 		System.out.println("-----");
-
-		String key = "Text Editor";
+		Zim.debugEntry=true;
+		String key = "哈尔滨";
 		int pos = zim.findTitlePos(key);
 		System.out.println("found pos=" + pos);
 		List<String> res = zim.findTitle(pos, 10);
