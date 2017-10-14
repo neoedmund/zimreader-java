@@ -19,17 +19,18 @@ public class Entry {
 
 	private void readEntry(DataInput f) throws IOException {
 		mimetype = f.readShort();
-		if (mimetype == (short) 0xffff) {//redirect
+		if (mimetype == (short) 0xffff) {// redirect
 			type = 1;
 
 			f.readByte();
 			namespace = f.readByte();
 			revision = f.readInt();
 			redirectIndex = f.readInt();
-			url = U.toBs(String.format("%s/%s", (char) namespace, U.toStr(U.readString(f))));
+			byte[] url1;
+			url = U.toBs(String.format("%s/%s", (char) namespace, U.toStr(url1 = U.readString(f))));
 			title = U.readString(f);
 			if (title.length == 0) {
-				title = url;
+				//title = url;
 			}
 		} else if (mimetype == (short) 0xfffe) {
 			type = 2;
@@ -42,10 +43,11 @@ public class Entry {
 			revision = f.readInt();
 			cluster = f.readInt();
 			blob = f.readInt();
-			url = U.toBs(String.format("%s/%s", (char) namespace, U.toStr(U.readString(f))));
+			byte[] url1;
+			url = U.toBs(String.format("%s/%s", (char) namespace, U.toStr(url1 = U.readString(f))));
 			title = U.readString(f);
 			if (title.length == 0) {
-				title = url;
+				//title = url;
 			}
 		}
 		if (Zim.debugEntry) {

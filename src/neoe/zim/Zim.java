@@ -158,6 +158,7 @@ public class Zim {
 	public int findTitlePos(String s) {
 		if (s == null || s.length() == 0)
 			return 0;
+		System.out.println("search " + s);
 		return searchNearestTitle(U.toBs(s), 0, articleCount - 1);
 	}
 
@@ -208,7 +209,6 @@ public class Zim {
 	}
 
 	private int searchNearestTitle(byte[] s, int i, int j) {
-
 		if (i > j)
 			return i;
 		if (i == j) {
