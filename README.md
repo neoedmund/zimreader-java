@@ -9,7 +9,7 @@ https://github.com/openzim/openzim
 
 This is another implementation, to be more java-lish.
 
-The spec of ZIM file is some easy.
+The spec of ZIM file is some easy. http://www.openzim.org/wiki/ZIM_file_format
 
 Currently, this library 
 can find Title(Entry) by starting keyword.

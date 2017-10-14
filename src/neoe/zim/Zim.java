@@ -1,16 +1,24 @@
 package neoe.zim;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
 import java.io.DataInputStream;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.InflaterInputStream;
+import java.util.zip.ZipInputStream;
+
+import org.openzim.util.Utilities;
+import org.tukaani.xz.SingleXZInputStream;
 
 public class Zim {
 
@@ -65,6 +73,7 @@ public class Zim {
 	}
 
 	static final long I4 = (1L << 32) - 1;
+	private static final boolean DEBUG = false;
 
 	private void readHeader(DataInput in0) throws Exception {
 
@@ -73,19 +82,23 @@ public class Zim {
 
 		// Read the contents of the header
 		magicNumber = in.readInt();
-		System.out.println("magic:" + Integer.toHexString(magicNumber));
+		if (DEBUG)
+			System.out.println("magic:" + Integer.toHexString(magicNumber));
 
 		version = in.readInt();
-		System.out.println("ver:" + Integer.toHexString(version));
+		if (DEBUG)
+			System.out.println("ver:" + Integer.toHexString(version));
 
 		in.readFully(uuid);
 		// System.out.println(uuid); read(buffer, 0, 4);
 
 		articleCount = in.readInt();
-		System.out.println("count:" + articleCount);
+		if (DEBUG)
+			System.out.println("count:" + articleCount);
 
 		clusterCount = in.readInt();
-		System.out.println(clusterCount);
+		if (DEBUG)
+			System.out.println(clusterCount);
 
 		urlPtrPos = in.readLong();
 		// System.out.println(urlPtrPos);
@@ -97,13 +110,16 @@ public class Zim {
 		// System.out.println(clusterPtrPos);
 
 		mimeListPos = in.readLong();
-		System.out.println(mimeListPos);
+		if (DEBUG)
+			System.out.println(mimeListPos);
 
 		mainPage = in.readInt();
-		System.out.println(mainPage);
+		if (DEBUG)
+			System.out.println(mainPage);
 
 		layoutPage = in.readInt();
-		System.out.println(layoutPage);
+		if (DEBUG)
+			System.out.println(layoutPage);
 		checksumPos = in.readLong();
 		if (mimeListPos >= 88) {
 			geoIndexPos = in.readLong();
@@ -112,6 +128,8 @@ public class Zim {
 		if (url != null) {
 			return;
 		}
+		if (!DEBUG)
+			return;
 		f.seek(mimeListPos);
 		mMIMETypeList = new ArrayList<String>();
 		while (true) {
@@ -121,7 +139,8 @@ public class Zim {
 			}
 			mMIMETypeList.add(s);
 		}
-		System.out.println("MIME=" + mMIMETypeList);
+		if (DEBUG)
+			System.out.println("MIME=" + mMIMETypeList);
 
 	}
 
@@ -270,11 +289,86 @@ public class Zim {
 		return e;
 	}
 
-	public byte[] getContent(int urlIndex) {
+	public byte[] getContent(int urlIndex) throws IOException {
 		if (urlIndex < 0)
 			return null;
-		// TODO
-		return null;
+		Entry e = getEntryByUrlIndex(urlIndex);
+		if (e.type == 1) {
+			e = getEntryByUrlIndex(e.redirectIndex);
+		}
+
+		// Get the cluster and blob numbers from the article
+		f.seek(clusterPtrPos + e.cluster * 8);
+		long cp;
+		f.seek(cp = leu.readLong());
+
+		// Read the first byte, for compression information
+		int compressionType = leu.readByte();
+
+		// Reference declaration
+		int firstOffset, numberOfBlobs, offset1, offset2, location, differenceOffset;
+
+		// Check the compression type that was read
+		FileInputStream fin;
+		InputStream ins;
+		LittleEndianDataInput ci;
+
+		switch (compressionType) {
+		// Read uncompressed data directly
+		case 0:
+		case 1:
+			fin = new FileInputStream(fn);
+			fin.skip(cp + 1);
+			ci = new LittleEndianDataInput(new DataInputStream(fin));
+			break;
+		case 2:
+			fin = new FileInputStream(fn);
+			fin.skip(cp + 1);
+			ins = new InflaterInputStream(fin);
+			ci = new LittleEndianDataInput(new DataInputStream(ins));
+			break;
+		case 3:
+			System.err.println("compressionType bzip2 not implemented yet");
+			return null;
+		// LZMA2 compressed data
+		case 4:
+			fin = new FileInputStream(fn);
+			fin.skip(cp + 1);
+			ins = new SingleXZInputStream(fin, 4194304);
+			ci = new LittleEndianDataInput(new DataInputStream(ins));
+			break;
+		default:
+			System.err.println("unknow compressionType:" + compressionType);
+			return null;
+		}
+
+		// The first four bytes are the offset of the zeroth blob
+		firstOffset = ci.readInt();
+		// The number of blobs
+		numberOfBlobs = firstOffset / 4;
+
+		// The blobNumber has to be lesser than the numberOfBlobs
+		assert e.blob < numberOfBlobs;
+
+		if (e.blob == 0) {
+			// The first offset is what we read earlier
+			offset1 = firstOffset;
+		} else {
+			location = (e.blob - 1) * 4;
+			ci.skipBytes(location);
+			offset1 = ci.readInt();
+		}
+
+		offset2 = ci.readInt();
+
+		differenceOffset = offset2 - offset1;
+		byte[] buffer = new byte[differenceOffset];
+
+		ci.skipBytes(offset1 - 4 * (e.blob + 2));
+		ci.readFully(buffer);
+		fin.close();
+		return buffer;
+
 	}
 
 }

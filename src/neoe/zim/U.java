@@ -21,6 +21,7 @@ public class U {
 		FileOutputStream out = new FileOutputStream(f);
 		out.write(bs);
 		out.close();
+		System.out.println("saved:"+url);
 	}
 
 	public static byte[] readString(DataInput in) throws IOException {

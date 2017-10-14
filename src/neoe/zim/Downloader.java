@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
 
-/** */
+/** A http downloader, here used for read header of zim file on web */
 public class Downloader {
 
 	public static final byte[] emptyBA = new byte[0];

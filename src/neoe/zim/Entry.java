@@ -3,6 +3,7 @@ package neoe.zim;
 import java.io.DataInput;
 import java.io.IOException;
 
+/** ZIM directory entry */
 public class Entry {
 
 	public byte[] title, url;
@@ -18,7 +19,7 @@ public class Entry {
 
 	private void readEntry(DataInput f) throws IOException {
 		mimetype = f.readShort();
-		if (mimetype == (short) 0xffff) {
+		if (mimetype == (short) 0xffff) {//redirect
 			type = 1;
 
 			f.readByte();

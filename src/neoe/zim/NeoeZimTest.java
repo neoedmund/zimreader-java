@@ -9,13 +9,13 @@ public class NeoeZimTest {
 			Zim zim = new Zim("D:\\10h\\wikipedia_en_all_2016-12.zim");
 			System.out.println("cnt=" + zim.articleCount);
 			System.out.println("--- first titles --");
-			for (int i = 0; i < 1000; i++) {
+			for (int i = 0; i < 100; i++) {
 				System.out.println(zim.getEntryByTitleIndex(i));
 			}
 			System.out.println("--- last titles ---");
 			// PrintWriter out = new PrintWriter(new OutputStreamWriter(new
 			// FileOutputStream("out1"), "utf8"));
-			for (int i = 0; i < 1000; i++) {
+			for (int i = 0; i < 100; i++) {
 				System.out.println(zim.getEntryByTitleIndex(zim.articleCount - 1 - i));
 			}
 
