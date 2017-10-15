@@ -28,21 +28,43 @@ import org.tukaani.xz.check.Check;
  * Unless you know what you are doing, don't use this class to decompress
  * standalone .xz files. For that purpose, use <code>XZInputStream</code>.
  *
+ * <h4>When uncompressed size is known beforehand</h4>
+ * <p>
+ * If you are decompressing complete XZ streams and your application knows
+ * exactly how much uncompressed data there should be, it is good to try
+ * reading one more byte by calling <code>read()</code> and checking
+ * that it returns <code>-1</code>. This way the decompressor will parse the
+ * file footers and verify the integrity checks, giving the caller more
+ * confidence that the uncompressed data is valid.
+ *
  * @see XZInputStream
  */
 public class SingleXZInputStream extends InputStream {
     private InputStream in;
-    private int memoryLimit;
-    private StreamFlags streamHeaderFlags;
-    private Check check;
+    private final int memoryLimit;
+    private final StreamFlags streamHeaderFlags;
+    private final Check check;
+    private final boolean verifyCheck;
     private BlockInputStream blockDecoder = null;
-    private IndexHash indexHash = new IndexHash();
+    private final IndexHash indexHash = new IndexHash();
     private boolean endReached = false;
     private IOException exception = null;
 
+    private final byte[] tempBuf = new byte[1];
+
     /**
-     * Creates a new input stream that decompresses exactly one XZ Stream
-     * from <code>in</code>.
+     * Reads the Stream Header into a buffer.
+     * This is a helper function for the constructors.
+     */
+    private static byte[] readStreamHeader(InputStream in) throws IOException {
+        byte[] streamHeader = new byte[DecoderUtil.STREAM_HEADER_SIZE];
+        new DataInputStream(in).readFully(streamHeader);
+        return streamHeader;
+    }
+
+    /**
+     * Creates a new XZ decompressor that decompresses exactly one
+     * XZ Stream from <code>in</code> without a memory usage limit.
      * <p>
      * This constructor reads and parses the XZ Stream Header (12 bytes)
      * from <code>in</code>. The header of the first Block is not read
@@ -68,12 +90,12 @@ public class SingleXZInputStream extends InputStream {
      * @throws      IOException may be thrown by <code>in</code>
      */
     public SingleXZInputStream(InputStream in) throws IOException {
-        initialize(in, -1);
+        this(in, -1);
     }
 
     /**
-     * Creates a new single-stream XZ decompressor with optional
-     * memory usage limit.
+     * Creates a new XZ decompressor that decompresses exactly one
+     * XZ Stream from <code>in</code> with an optional memory usage limit.
      * <p>
      * This is identical to <code>SingleXZInputStream(InputStream)</code>
      * except that this takes also the <code>memoryLimit</code> argument.
@@ -81,8 +103,9 @@ public class SingleXZInputStream extends InputStream {
      * @param       in          input stream from which XZ-compressed
      *                          data is read
      *
-     * @param       memoryLimit memory usage limit as kibibytes (KiB)
-     *                          or -1 to impose no memory usage limit
+     * @param       memoryLimit memory usage limit in kibibytes (KiB)
+     *                          or <code>-1</code> to impose no
+     *                          memory usage limit
      *
      * @throws      XZFormatException
      *                          input is not in the XZ format
@@ -102,25 +125,71 @@ public class SingleXZInputStream extends InputStream {
      */
     public SingleXZInputStream(InputStream in, int memoryLimit)
             throws IOException {
-        initialize(in, memoryLimit);
+        this(in, memoryLimit, true, readStreamHeader(in));
     }
 
-    SingleXZInputStream(InputStream in, int memoryLimit,
+    /**
+     * Creates a new XZ decompressor that decompresses exactly one
+     * XZ Stream from <code>in</code> with an optional memory usage limit
+     * and ability to disable verification of integrity checks.
+     * <p>
+     * This is identical to <code>SingleXZInputStream(InputStream,int)</code>
+     * except that this takes also the <code>verifyCheck</code> argument.
+     * <p>
+     * Note that integrity check verification should almost never be disabled.
+     * Possible reasons to disable integrity check verification:
+     * <ul>
+     *   <li>Trying to recover data from a corrupt .xz file.</li>
+     *   <li>Speeding up decompression. This matters mostly with SHA-256
+     *   or with files that have compressed extremely well. It's recommended
+     *   that integrity checking isn't disabled for performance reasons
+     *   unless the file integrity is verified externally in some other
+     *   way.</li>
+     * </ul>
+     * <p>
+     * <code>verifyCheck</code> only affects the integrity check of
+     * the actual compressed data. The CRC32 fields in the headers
+     * are always verified.
+     *
+     * @param       in          input stream from which XZ-compressed
+     *                          data is read
+     *
+     * @param       memoryLimit memory usage limit in kibibytes (KiB)
+     *                          or <code>-1</code> to impose no
+     *                          memory usage limit
+     *
+     * @param       verifyCheck if <code>true</code>, the integrity checks
+     *                          will be verified; this should almost never
+     *                          be set to <code>false</code>
+     *
+     * @throws      XZFormatException
+     *                          input is not in the XZ format
+     *
+     * @throws      CorruptedInputException
+     *                          XZ header CRC32 doesn't match
+     *
+     * @throws      UnsupportedOptionsException
+     *                          XZ header is valid but specifies options
+     *                          not supported by this implementation
+     *
+     * @throws      EOFException
+     *                          less than 12 bytes of input was available
+     *                          from <code>in</code>
+     *
+     * @throws      IOException may be thrown by <code>in</code>
+     *
+     * @since 1.6
+     */
+    public SingleXZInputStream(InputStream in, int memoryLimit,
+                               boolean verifyCheck) throws IOException {
+        this(in, memoryLimit, verifyCheck, readStreamHeader(in));
+    }
+
+    SingleXZInputStream(InputStream in, int memoryLimit, boolean verifyCheck,
                         byte[] streamHeader) throws IOException {
-        initialize(in, memoryLimit, streamHeader);
-    }
-
-    private void initialize(InputStream in, int memoryLimit)
-            throws IOException {
-        byte[] streamHeader = new byte[DecoderUtil.STREAM_HEADER_SIZE];
-        new DataInputStream(in).readFully(streamHeader);
-        initialize(in, memoryLimit, streamHeader);
-    }
-
-    private void initialize(InputStream in, int memoryLimit,
-                            byte[] streamHeader) throws IOException {
         this.in = in;
         this.memoryLimit = memoryLimit;
+        this.verifyCheck = verifyCheck;
         streamHeaderFlags = DecoderUtil.decodeStreamHeader(streamHeader);
         check = Check.getInstance(streamHeaderFlags.checkType);
     }
@@ -147,7 +216,7 @@ public class SingleXZInputStream extends InputStream {
      * Decompresses the next byte from this input stream.
      * <p>
      * Reading lots of data with <code>read()</code> from this input stream
-     * may be inefficient. Wrap it in <code>java.io.BufferedInputStream</code>
+     * may be inefficient. Wrap it in {@link java.io.BufferedInputStream}
      * if you need to read lots of data one byte at a time.
      *
      * @return      the next decompressed byte, or <code>-1</code>
@@ -157,14 +226,15 @@ public class SingleXZInputStream extends InputStream {
      * @throws      UnsupportedOptionsException
      * @throws      MemoryLimitException
      *
+     * @throws      XZIOException if the stream has been closed
+     *
      * @throws      EOFException
      *                          compressed input is truncated or corrupt
      *
      * @throws      IOException may be thrown by <code>in</code>
      */
     public int read() throws IOException {
-        byte[] buf = new byte[1];
-        return read(buf, 0, 1) == -1 ? -1 : (buf[0] & 0xFF);
+        return read(tempBuf, 0, 1) == -1 ? -1 : (tempBuf[0] & 0xFF);
     }
 
     /**
@@ -194,6 +264,8 @@ public class SingleXZInputStream extends InputStream {
      * @throws      UnsupportedOptionsException
      * @throws      MemoryLimitException
      *
+     * @throws      XZIOException if the stream has been closed
+     *
      * @throws      EOFException
      *                          compressed input is truncated or corrupt
      *
@@ -201,10 +273,13 @@ public class SingleXZInputStream extends InputStream {
      */
     public int read(byte[] buf, int off, int len) throws IOException {
         if (off < 0 || len < 0 || off + len < 0 || off + len > buf.length)
-            throw new IllegalArgumentException();
+            throw new IndexOutOfBoundsException();
 
         if (len == 0)
             return 0;
+
+        if (in == null)
+            throw new XZIOException("Stream closed");
 
         if (exception != null)
             throw exception;
@@ -218,8 +293,8 @@ public class SingleXZInputStream extends InputStream {
             while (len > 0) {
                 if (blockDecoder == null) {
                     try {
-                        blockDecoder = new BlockInputStream(in, check,
-                                                            memoryLimit);
+                        blockDecoder = new BlockInputStream(
+                                in, check, verifyCheck, memoryLimit, -1, -1);
                     } catch (IndexIndicatorException e) {
                         indexHash.validate(in);
                         validateStreamFooter();
@@ -273,13 +348,28 @@ public class SingleXZInputStream extends InputStream {
      *              without blocking
      */
     public int available() throws IOException {
+        if (in == null)
+            throw new XZIOException("Stream closed");
+
+        if (exception != null)
+            throw exception;
+
         return blockDecoder == null ? 0 : blockDecoder.available();
     }
 
     /**
-     * Calls <code>in.close()</code>.
+     * Closes the stream and calls <code>in.close()</code>.
+     * If the stream was already closed, this does nothing.
+     *
+     * @throws  IOException if thrown by <code>in.close()</code>
      */
     public void close() throws IOException {
-        in.close();
+        if (in != null) {
+            try {
+                in.close();
+            } finally {
+                in = null;
+            }
+        }
     }
 }

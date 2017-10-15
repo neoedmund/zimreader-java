@@ -1,10 +1,12 @@
 package neoe.zim;
 
+import java.io.File;
 import java.util.List;
 
 public class NeoeZimTest {
 
 	public static void main(String[] args) throws Exception {
+		
 		{
 			Zim zim = new Zim("D:\\10h\\wikipedia_en_all_2016-12.zim");
 			System.out.println("cnt=" + zim.articleCount);
@@ -42,7 +44,7 @@ public class NeoeZimTest {
 				}
 			}
 		}
-
+		System.out.println(new File(".").getAbsolutePath());
 		// {
 		// Zim zim = new Zim(
 		// "http://download.kiwix.org/zim/stack_exchange/blender.stackexchange.com_en_all_2017-07.zim",

@@ -25,6 +25,8 @@ class BlockOutputStream extends FinishableOutputStream {
     private final long compressedSizeLimit;
     private long uncompressedSize = 0;
 
+    private final byte[] tempBuf = new byte[1];
+
     public BlockOutputStream(OutputStream out, FilterEncoder[] filters,
                              Check check) throws IOException {
         this.out = out;
@@ -33,7 +35,7 @@ class BlockOutputStream extends FinishableOutputStream {
         // Initialize the filter chain.
         outCounted = new CountingOutputStream(out);
         filterChain = outCounted;
-        for (int i = 0; i < filters.length; ++i)
+        for (int i = filters.length - 1; i >= 0; --i)
             filterChain = filters[i].getOutputStream(filterChain);
 
         // Prepare to encode the Block Header field.
@@ -83,15 +85,19 @@ class BlockOutputStream extends FinishableOutputStream {
     }
 
     public void write(int b) throws IOException {
-        byte[] buf = new byte[1];
-        buf[0] = (byte)b;
-        write(buf, 0, 1);
+        tempBuf[0] = (byte)b;
+        write(tempBuf, 0, 1);
     }
 
     public void write(byte[] buf, int off, int len) throws IOException {
         filterChain.write(buf, off, len);
         check.update(buf, off, len);
         uncompressedSize += len;
+        validate();
+    }
+
+    public void flush() throws IOException {
+        filterChain.flush();
         validate();
     }
 

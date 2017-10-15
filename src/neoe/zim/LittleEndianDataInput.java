@@ -11,7 +11,10 @@ public class LittleEndianDataInput implements DataInput {
 	}
 
 	public final short readShort() throws IOException {
-		in.readFully(w, 0, 2);
+		// in.readFully(w, 0, 2);
+		for (int i = 0; i < 2; i++) {
+			w[i] = in.readByte();
+		}
 		return (short) ((w[1] & 0xff) << 8 | (w[0] & 0xff));
 	}
 
@@ -19,7 +22,10 @@ public class LittleEndianDataInput implements DataInput {
 	 * like DataInputStream.readInt except little endian.
 	 */
 	public final int readInt() throws IOException {
-		in.readFully(w, 0, 4);
+		// in.readFully(w, 0, 4);
+		for (int i = 0; i < 4; i++) {
+			w[i] = in.readByte();
+		}
 		return (w[3]) << 24 | (w[2] & 0xff) << 16 | (w[1] & 0xff) << 8 | (w[0] & 0xff);
 	}
 
@@ -27,7 +33,10 @@ public class LittleEndianDataInput implements DataInput {
 	 * like DataInputStream.readLong except little endian.
 	 */
 	public final long readLong() throws IOException {
-		in.readFully(w, 0, 8);
+		// in.readFully(w, 0, 8);
+		for (int i = 0; i < 8; i++) {
+			w[i] = in.readByte();
+		}
 		return (long) (w[7]) << 56 | (long) (w[6] & 0xff) << 48 | (long) (w[5] & 0xff) << 40
 				| (long) (w[4] & 0xff) << 32 | (long) (w[3] & 0xff) << 24 | (long) (w[2] & 0xff) << 16
 				| (long) (w[1] & 0xff) << 8 | (long) (w[0] & 0xff);

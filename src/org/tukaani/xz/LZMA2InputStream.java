@@ -14,11 +14,11 @@ import java.io.InputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import org.tukaani.xz.lz.LZDecoder;
-import org.tukaani.xz.rangecoder.RangeDecoder;
+import org.tukaani.xz.rangecoder.RangeDecoderFromBuffer;
 import org.tukaani.xz.lzma.LZMADecoder;
 
 /**
- * Decompresses a raw LZMA2 stream.
+ * Decompresses a raw LZMA2 stream (no XZ headers).
  */
 public class LZMA2InputStream extends InputStream {
     /**
@@ -43,10 +43,11 @@ public class LZMA2InputStream extends InputStream {
 
     private static final int COMPRESSED_SIZE_MAX = 1 << 16;
 
-    private final DataInputStream in;
+    private DataInputStream in;
 
     private final LZDecoder lz;
-    private final RangeDecoder rc = new RangeDecoder(COMPRESSED_SIZE_MAX);
+    private final RangeDecoderFromBuffer rc
+            = new RangeDecoderFromBuffer(COMPRESSED_SIZE_MAX);
     private LZMADecoder lzma;
 
     private int uncompressedSize = 0;
@@ -57,6 +58,8 @@ public class LZMA2InputStream extends InputStream {
     private boolean endReached = false;
 
     private IOException exception = null;
+
+    private final byte[] tempBuf = new byte[1];
 
     /**
      * Gets approximate decompressor memory requirements as kibibytes for
@@ -69,7 +72,7 @@ public class LZMA2InputStream extends InputStream {
      * @return      approximate memory requirements as kibibytes (KiB)
      */
     public static int getMemoryUsage(int dictSize) {
-        // The base state is aroudn 30-40 KiB (probabilities etc.),
+        // The base state is around 30-40 KiB (probabilities etc.),
         // range decoder needs COMPRESSED_SIZE_MAX bytes for buffering,
         // and LZ decoder needs a dictionary buffer.
         return 40 + COMPRESSED_SIZE_MAX / 1024 + getDictSize(dictSize) / 1024;
@@ -111,15 +114,14 @@ public class LZMA2InputStream extends InputStream {
      *                          <code>DICT_SIZE_MAX</code>]
      */
     public LZMA2InputStream(InputStream in, int dictSize) {
-        this.in = new DataInputStream(in);
-        this.lz = new LZDecoder(getDictSize(dictSize), null);
+        this(in, dictSize, null);
     }
 
     /**
      * Creates a new LZMA2 decompressor using a preset dictionary.
      * <p>
-     * This is like <code>LZMAInputStream()</code> except that the
-     * dictionary may be initialized using a preset dictionary.
+     * This is like <code>LZMA2InputStream(InputStream, int)</code> except
+     * that the dictionary may be initialized using a preset dictionary.
      * If a preset dictionary was used when compressing the data, the
      * same preset dictionary must be provided when decompressing.
      *
@@ -133,12 +135,16 @@ public class LZMA2InputStream extends InputStream {
      * @param       presetDict  preset dictionary or <code>null</code>
      *                          to use no preset dictionary
      */
-    public LZMA2InputStream(InputStream in, int dictSize, byte[] presetDict)
-            throws IOException {
+    public LZMA2InputStream(InputStream in, int dictSize, byte[] presetDict) {
+        // Check for null because otherwise null isn't detect
+        // in this constructor.
+        if (in == null)
+            throw new NullPointerException();
+
         this.in = new DataInputStream(in);
         this.lz = new LZDecoder(getDictSize(dictSize), presetDict);
 
-        if (presetDict.length > 0)
+        if (presetDict != null && presetDict.length > 0)
             needDictReset = false;
     }
 
@@ -154,14 +160,15 @@ public class LZMA2InputStream extends InputStream {
      *
      * @throws      CorruptedInputException
      *
+     * @throws      XZIOException if the stream has been closed
+     *
      * @throws      EOFException
      *                          compressed input is truncated or corrupt
      *
      * @throws      IOException may be thrown by <code>in</code>
      */
     public int read() throws IOException {
-        byte[] buf = new byte[1];
-        return read(buf, 0, 1) == -1 ? -1 : (buf[0] & 0xFF);
+        return read(tempBuf, 0, 1) == -1 ? -1 : (tempBuf[0] & 0xFF);
     }
 
     /**
@@ -169,7 +176,7 @@ public class LZMA2InputStream extends InputStream {
      * <p>
      * If <code>len</code> is zero, no bytes are read and <code>0</code>
      * is returned. Otherwise this will block until <code>len</code>
-     * bytes have been decompressed, the end of LZMA2 stream is reached,
+     * bytes have been decompressed, the end of the LZMA2 stream is reached,
      * or an exception is thrown.
      *
      * @param       buf         target buffer for uncompressed data
@@ -181,6 +188,8 @@ public class LZMA2InputStream extends InputStream {
      *
      * @throws      CorruptedInputException
      *
+     * @throws      XZIOException if the stream has been closed
+     *
      * @throws      EOFException
      *                          compressed input is truncated or corrupt
      *
@@ -188,10 +197,13 @@ public class LZMA2InputStream extends InputStream {
      */
     public int read(byte[] buf, int off, int len) throws IOException {
         if (off < 0 || len < 0 || off + len < 0 || off + len > buf.length)
-            throw new IllegalArgumentException();
+            throw new IndexOutOfBoundsException();
 
         if (len == 0)
             return 0;
+
+        if (in == null)
+            throw new XZIOException("Stream closed");
 
         if (exception != null)
             throw exception;
@@ -216,6 +228,8 @@ public class LZMA2InputStream extends InputStream {
                 } else {
                     lz.setLimit(copySizeMax);
                     lzma.decode();
+                    if (!rc.isInBufferOK())
+                        throw new CorruptedInputException();
                 }
 
                 int copiedSize = lz.flush(buf, off);
@@ -308,7 +322,7 @@ public class LZMA2InputStream extends InputStream {
      * thrown before the number of bytes claimed to be available have
      * been read from this input stream.
      * <p>
-     * In LZMAInputStream, the return value will be non-zero when the
+     * In LZMA2InputStream, the return value will be non-zero when the
      * decompressor is in the middle of an LZMA2 chunk. The return value
      * will then be the number of uncompressed bytes remaining from that
      * chunk.
@@ -316,14 +330,29 @@ public class LZMA2InputStream extends InputStream {
      * @return      the number of uncompressed bytes that can be read
      *              without blocking
      */
-    public int available() {
+    public int available() throws IOException {
+        if (in == null)
+            throw new XZIOException("Stream closed");
+
+        if (exception != null)
+            throw exception;
+
         return uncompressedSize;
     }
 
     /**
-     * Calls <code>in.close()</code>.
+     * Closes the stream and calls <code>in.close()</code>.
+     * If the stream was already closed, this does nothing.
+     *
+     * @throws  IOException if thrown by <code>in.close()</code>
      */
     public void close() throws IOException {
-        in.close();
+        if (in != null) {
+            try {
+                in.close();
+            } finally {
+                in = null;
+            }
+        }
     }
 }

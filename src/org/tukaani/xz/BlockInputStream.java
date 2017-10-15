@@ -13,28 +13,34 @@ import java.io.InputStream;
 import java.io.DataInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.EOFException;
 import java.util.Arrays;
 import org.tukaani.xz.common.DecoderUtil;
 import org.tukaani.xz.check.Check;
 
 class BlockInputStream extends InputStream {
-    private final InputStream in;
     private final DataInputStream inData;
     private final CountingInputStream inCounted;
     private InputStream filterChain;
     private final Check check;
+    private final boolean verifyCheck;
 
     private long uncompressedSizeInHeader = -1;
     private long compressedSizeInHeader = -1;
     private long compressedSizeLimit;
-    private int headerSize;
+    private final int headerSize;
     private long uncompressedSize = 0;
+    private boolean endReached = false;
 
-    public BlockInputStream(InputStream in, Check check, int memoryLimit)
+    private final byte[] tempBuf = new byte[1];
+
+    public BlockInputStream(InputStream in,
+                            Check check, boolean verifyCheck,
+                            int memoryLimit,
+                            long unpaddedSizeInIndex,
+                            long uncompressedSizeInIndex)
             throws IOException, IndexIndicatorException {
-        this.in = in;
         this.check = check;
+        this.verifyCheck = verifyCheck;
         inData = new DataInputStream(in);
 
         byte[] buf = new byte[DecoderUtil.BLOCK_HEADER_SIZE_MAX];
@@ -47,7 +53,7 @@ class BlockInputStream extends InputStream {
             throw new IndexIndicatorException();
 
         // Read the rest of the Block Header.
-        headerSize = 4 * (buf[0] + 1);
+        headerSize = 4 * ((buf[0] & 0xFF) + 1);
         inData.readFully(buf, 1, headerSize - 1);
 
         // Validate the CRC32.
@@ -114,6 +120,43 @@ class BlockInputStream extends InputStream {
                 throw new UnsupportedOptionsException(
                         "Unsupported options in XZ Block Header");
 
+        // Validate the Blcok Header against the Index when doing
+        // random access reading.
+        if (unpaddedSizeInIndex != -1) {
+            // Compressed Data must be at least one byte, so if Block Header
+            // and Check alone take as much or more space than the size
+            // stored in the Index, the file is corrupt.
+            int headerAndCheckSize = headerSize + check.getSize();
+            if (headerAndCheckSize >= unpaddedSizeInIndex)
+                throw new CorruptedInputException(
+                        "XZ Index does not match a Block Header");
+
+            // The compressed size calculated from Unpadded Size must
+            // match the value stored in the Compressed Size field in
+            // the Block Header.
+            long compressedSizeFromIndex
+                    = unpaddedSizeInIndex - headerAndCheckSize;
+            if (compressedSizeFromIndex > compressedSizeLimit
+                    || (compressedSizeInHeader != -1
+                        && compressedSizeInHeader != compressedSizeFromIndex))
+                throw new CorruptedInputException(
+                        "XZ Index does not match a Block Header");
+
+            // The uncompressed size stored in the Index must match
+            // the value stored in the Uncompressed Size field in
+            // the Block Header.
+            if (uncompressedSizeInHeader != -1
+                    && uncompressedSizeInHeader != uncompressedSizeInIndex)
+                throw new CorruptedInputException(
+                        "XZ Index does not match a Block Header");
+
+            // For further validation, pretend that the values from the Index
+            // were stored in the Block Header.
+            compressedSizeLimit = compressedSizeFromIndex;
+            compressedSizeInHeader = compressedSizeFromIndex;
+            uncompressedSizeInHeader = uncompressedSizeInIndex;
+        }
+
         // Check if the Filter IDs are supported, decode
         // the Filter Properties, and check that they are
         // supported by this decoder implementation.
@@ -125,6 +168,9 @@ class BlockInputStream extends InputStream {
 
             else if (filterIDs[i] == DeltaCoder.FILTER_ID)
                 filters[i] = new DeltaDecoder(filterProps[i]);
+
+            else if (BCJDecoder.isBCJFilterID(filterIDs[i]))
+                filters[i] = new BCJDecoder(filterIDs[i], filterProps[i]);
 
             else
                 throw new UnsupportedOptionsException(
@@ -154,19 +200,23 @@ class BlockInputStream extends InputStream {
     }
 
     public int read() throws IOException {
-        byte[] buf = new byte[1];
-        return read(buf, 0, 1) == -1 ? -1 : (buf[0] & 0xFF);
+        return read(tempBuf, 0, 1) == -1 ? -1 : (tempBuf[0] & 0xFF);
     }
 
     public int read(byte[] buf, int off, int len) throws IOException {
+        if (endReached)
+            return -1;
+
         int ret = filterChain.read(buf, off, len);
-        long compressedSize = inCounted.getSize();
 
         if (ret > 0) {
-            check.update(buf, off, ret);
+            if (verifyCheck)
+                check.update(buf, off, ret);
+
             uncompressedSize += ret;
 
             // Catch invalid values.
+            long compressedSize = inCounted.getSize();
             if (compressedSize < 0
                     || compressedSize > compressedSizeLimit
                     || uncompressedSize < 0
@@ -174,29 +224,50 @@ class BlockInputStream extends InputStream {
                         && uncompressedSize > uncompressedSizeInHeader))
                 throw new CorruptedInputException();
 
-        } else if (ret == -1) {
-            // Validate Compressed Size and Uncompressed Size if they were
-            // present in Block Header.
-            if ((compressedSizeInHeader != -1
-                        && compressedSizeInHeader != compressedSize)
-                    || (uncompressedSizeInHeader != -1
-                        && uncompressedSizeInHeader != uncompressedSize))
-                throw new CorruptedInputException();
-
-            // Block Padding bytes must be zeros.
-            for (long i = compressedSize; (i & 3) != 0; ++i)
-                if (inData.readUnsignedByte() != 0x00)
+            // Check the Block integrity as soon as possible:
+            //   - The filter chain shouldn't return less than requested
+            //     unless it hit the end of the input.
+            //   - If the uncompressed size is known, we know when there
+            //     shouldn't be more data coming. We still need to read
+            //     one byte to let the filter chain catch errors and to
+            //     let it read end of payload marker(s).
+            if (ret < len || uncompressedSize == uncompressedSizeInHeader) {
+                if (filterChain.read() != -1)
                     throw new CorruptedInputException();
 
-            // Validate the integrity check.
-            byte[] storedCheck = new byte[check.getSize()];
-            inData.readFully(storedCheck);
-            if (!Arrays.equals(check.finish(), storedCheck))
-                throw new CorruptedInputException("Integrity ("
-                        + check.getName() + ") check does not match");
+                validate();
+                endReached = true;
+            }
+        } else if (ret == -1) {
+            validate();
+            endReached = true;
         }
 
         return ret;
+    }
+
+    private void validate() throws IOException {
+        long compressedSize = inCounted.getSize();
+
+        // Validate Compressed Size and Uncompressed Size if they were
+        // present in Block Header.
+        if ((compressedSizeInHeader != -1
+                    && compressedSizeInHeader != compressedSize)
+                || (uncompressedSizeInHeader != -1
+                    && uncompressedSizeInHeader != uncompressedSize))
+            throw new CorruptedInputException();
+
+        // Block Padding bytes must be zeros.
+        while ((compressedSize++ & 3) != 0)
+            if (inData.readUnsignedByte() != 0x00)
+                throw new CorruptedInputException();
+
+        // Validate the integrity check if verifyCheck is true.
+        byte[] storedCheck = new byte[check.getSize()];
+        inData.readFully(storedCheck);
+        if (verifyCheck && !Arrays.equals(check.finish(), storedCheck))
+            throw new CorruptedInputException("Integrity check ("
+                    + check.getName() + ") does not match");
     }
 
     public int available() throws IOException {

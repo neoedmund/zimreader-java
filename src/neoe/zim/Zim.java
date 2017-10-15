@@ -8,17 +8,17 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.InflaterInputStream;
-import java.util.zip.ZipInputStream;
 
-import org.openzim.util.Utilities;
-import org.tukaani.xz.SingleXZInputStream;
+import org.tukaani.xz.XZInputStream;
 
 public class Zim {
 
@@ -38,8 +38,8 @@ public class Zim {
 	public ArrayList<String> mMIMETypeList;
 	public long checksumPos;
 	public long geoIndexPos;
-	private Map<Integer, Entry> titleCache = new HashMap<Integer, Entry>();
-	private Map<Integer, Entry> urlCache = new HashMap<Integer, Entry>();
+	private static Map<Integer, Entry> titleCache = Collections.synchronizedMap(new HashMap<Integer, Entry>());
+	private static Map<Integer, Entry> urlCache = Collections.synchronizedMap(new HashMap<Integer, Entry>());
 	private String url;
 	RandomAccessFile f;
 	LittleEndianDataInput leu;
@@ -58,6 +58,8 @@ public class Zim {
 	public void closeFile() throws IOException {
 		if (f != null)
 			f.close();
+		f = null;
+		leu = null;
 	}
 
 	public Zim(String url, boolean network) throws Exception {
@@ -290,8 +292,18 @@ public class Zim {
 	}
 
 	public byte[] getContent(int urlIndex) throws IOException {
+		ByteArrayOutputStream ba = new ByteArrayOutputStream();
+		writeContent(ba, urlIndex);
+		return ba.toByteArray();
+	}
+
+	public void printCacheSize() {
+		System.out.println("cache:t=" + titleCache.size() + "|u=" + urlCache.size());
+	}
+
+	public void writeContent(OutputStream contentOutput, int urlIndex) throws IOException {
 		if (urlIndex < 0)
-			return null;
+			return;
 		Entry e = getEntryByUrlIndex(urlIndex);
 		if (e.type == 1) {
 			e = getEntryByUrlIndex(e.redirectIndex);
@@ -310,7 +322,7 @@ public class Zim {
 
 		// Check the compression type that was read
 		FileInputStream fin;
-		InputStream ins;
+		InputStream ins = null;
 		LittleEndianDataInput ci;
 
 		switch (compressionType) {
@@ -329,17 +341,18 @@ public class Zim {
 			break;
 		case 3:
 			System.err.println("compressionType bzip2 not implemented yet");
-			return null;
+			return;
 		// LZMA2 compressed data
 		case 4:
 			fin = new FileInputStream(fn);
 			fin.skip(cp + 1);
-			ins = new SingleXZInputStream(fin, 4194304);
+			// ins = new SingleXZInputStream(fin, 65640);
+			ins = new XZInputStream(fin);
 			ci = new LittleEndianDataInput(new DataInputStream(ins));
 			break;
 		default:
 			System.err.println("unknow compressionType:" + compressionType);
-			return null;
+			return;
 		}
 
 		// The first four bytes are the offset of the zeroth blob
@@ -362,12 +375,18 @@ public class Zim {
 		offset2 = ci.readInt();
 
 		differenceOffset = offset2 - offset1;
-		byte[] buffer = new byte[differenceOffset];
+		// byte[] buffer = new byte[differenceOffset];
 
 		ci.skipBytes(offset1 - 4 * (e.blob + 2));
-		ci.readFully(buffer);
+
+		for (int i = 0; i < differenceOffset; i++) {
+			contentOutput.write(ci.readByte() & 0xff);
+		}
+		contentOutput.flush();
+//		System.out.println("write "+differenceOffset+" bytes");
 		fin.close();
-		return buffer;
+		if (ins != null)
+			ins.close();
 
 	}
 

@@ -14,7 +14,7 @@ import java.io.IOException;
 import org.tukaani.xz.delta.DeltaDecoder;
 
 /**
- * Decodes Delta-filtered data.
+ * Decodes raw Delta-filtered data (no XZ headers).
  * <p>
  * The delta filter doesn't change the size of the data and thus it
  * cannot have an end-of-payload marker. It will simply decode until
@@ -31,8 +31,12 @@ public class DeltaInputStream extends InputStream {
      */
     public static final int DISTANCE_MAX = 256;
 
-    private final InputStream in;
+    private InputStream in;
     private final DeltaDecoder delta;
+
+    private IOException exception = null;
+
+    private final byte[] tempBuf = new byte[1];
 
     /**
      * Creates a new Delta decoder with the given delta calculation distance.
@@ -45,6 +49,11 @@ public class DeltaInputStream extends InputStream {
      *                          <code>DISTANCE_MAX</code>]
      */
     public DeltaInputStream(InputStream in, int distance) {
+        // Check for null because otherwise null isn't detect
+        // in this constructor.
+        if (in == null)
+            throw new NullPointerException();
+
         this.in = in;
         this.delta = new DeltaDecoder(distance);
     }
@@ -58,8 +67,7 @@ public class DeltaInputStream extends InputStream {
      * @throws      IOException may be thrown by <code>in</code>
      */
     public int read() throws IOException {
-        byte[] buf = new byte[1];
-        return read(buf, 0, 1) == -1 ? -1 : (buf[0] & 0xFF);
+        return read(tempBuf, 0, 1) == -1 ? -1 : (tempBuf[0] & 0xFF);
     }
 
     /**
@@ -75,11 +83,29 @@ public class DeltaInputStream extends InputStream {
      * @return      number of bytes read, or <code>-1</code> to indicate
      *              the end of the input stream <code>in</code>
      *
+     * @throws      XZIOException if the stream has been closed
+     *
      * @throws      IOException may be thrown by underlaying input
      *                          stream <code>in</code>
      */
     public int read(byte[] buf, int off, int len) throws IOException {
-        int size = in.read(buf, off, len);
+        if (len == 0)
+            return 0;
+
+        if (in == null)
+            throw new XZIOException("Stream closed");
+
+        if (exception != null)
+            throw exception;
+
+        int size;
+        try {
+            size = in.read(buf, off, len);
+        } catch (IOException e) {
+            exception = e;
+            throw e;
+        }
+
         if (size == -1)
             return -1;
 
@@ -93,13 +119,28 @@ public class DeltaInputStream extends InputStream {
      * @return      the value returned by <code>in.available()</code>
      */
     public int available() throws IOException {
+        if (in == null)
+            throw new XZIOException("Stream closed");
+
+        if (exception != null)
+            throw exception;
+
         return in.available();
     }
 
     /**
-     * Calls <code>in.close()</code>.
+     * Closes the stream and calls <code>in.close()</code>.
+     * If the stream was already closed, this does nothing.
+     *
+     * @throws  IOException if thrown by <code>in.close()</code>
      */
     public void close() throws IOException {
-        in.close();
+        if (in != null) {
+            try {
+                in.close();
+            } finally {
+                in = null;
+            }
+        }
     }
 }

@@ -1,21 +1,36 @@
 /**
  * XZ data compression support.
+ *
+ * <h4>Introduction</h4>
  * <p>
- * In the (very) long term, this aims to be a complete implementation of
- * XZ data compression in Java. Currently only streamed decompression is
- * supported.
+ * This aims to be a complete implementation of XZ data compression
+ * in pure Java. Features:
+ * <ul>
+ * <li>Full support for the .xz file format specification version 1.0.4</li>
+ * <li>Single-threaded streamed compression and decompression</li>
+ * <li>Single-threaded decompression with limited random access support</li>
+ * <li>Raw streams (no .xz headers) for advanced users, including LZMA2
+ *     with preset dictionary</li>
+ * </ul>
+ * <p>
+ * Threading is planned but it is unknown when it will be implemented.
  * <p>
  * For the latest source code, see the
- * <a href="http://tukaani.org/xz/java.html">home page of XZ in Java</a>.
+ * <a href="http://tukaani.org/xz/java.html">home page of XZ for Java</a>.
  *
- * <h3>Decompression notes</h3>
+ * <h4>Getting started</h4>
+ * <p>
+ * Start by reading the documentation of {@link org.tukaani.xz.XZOutputStream}
+ * and {@link org.tukaani.xz.XZInputStream}.
+ * If you use XZ inside another file format or protocol,
+ * see also {@link org.tukaani.xz.SingleXZInputStream}.
  *
- * If you are decompressing complete files and your application knows
- * exactly how much uncompressed data there should be, it is still good
- * to try reading one more byte by calling <code>read()</code> and checking
- * that it returns <code>-1</code>. This way the decompressor will parse the
- * file footers and verify the integrity checks, giving the caller more
- * confidence that the uncompressed data is valid. (This advice seems to
- * apply to <code>java.util.zip.GZIPInputStream</code> too.)
+ * <h4>Licensing</h4>
+ * <p>
+ * XZ for Java has been put into the public domain, thus you can do
+ * whatever you want with it. All the files in the package have been
+ * written by Lasse Collin and/or Igor Pavlov.
+ * <p>
+ * This software is provided "as is", without any warranty.
  */
 package org.tukaani.xz;
