@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.InflaterInputStream;
 
-import org.tukaani.xz.XZInputStream;
+import org.tukaani.xz.SingleXZInputStream;
 
 public class Zim {
 
@@ -38,8 +38,8 @@ public class Zim {
 	public ArrayList<String> mMIMETypeList;
 	public long checksumPos;
 	public long geoIndexPos;
-	private static Map<Integer, Entry> titleCache = Collections.synchronizedMap(new HashMap<Integer, Entry>());
-	private static Map<Integer, Entry> urlCache = Collections.synchronizedMap(new HashMap<Integer, Entry>());
+	private static Map<String, Map<Integer, Entry>> titleCache = Collections.synchronizedMap(new HashMap<>());
+	private static Map<String, Map<Integer, Entry>> urlCache = Collections.synchronizedMap(new HashMap<>());
 	private String url;
 	RandomAccessFile f;
 	LittleEndianDataInput leu;
@@ -261,7 +261,12 @@ public class Zim {
 	}
 
 	public Entry getEntryByTitleIndex(int titleIndex) {
-		Entry e = titleCache.get(titleIndex);
+		Map<Integer, Entry> titleCache1 = titleCache.get(fn);
+		if (titleCache1 == null) {
+			titleCache1 = new HashMap<>();
+			titleCache.put(fn, titleCache1);
+		}
+		Entry e = titleCache1.get(titleIndex);
 		if (e == null) {
 			try {
 				f.seek(titlePtrPos + titleIndex * 4);
@@ -270,13 +275,18 @@ public class Zim {
 				e1.printStackTrace();
 				return null;
 			}
-			titleCache.put(titleIndex, e);
+			titleCache1.put(titleIndex, e);
 		}
 		return e;
 	}
 
 	public Entry getEntryByUrlIndex(int urlIndex) {
-		Entry e = urlCache.get(urlIndex);
+		Map<Integer, Entry> urlCache1 = urlCache.get(fn);
+		if (urlCache1 == null) {
+			urlCache1 = new HashMap<>();
+			urlCache.put(fn, urlCache1);
+		}
+		Entry e = urlCache1.get(urlIndex);
 		if (e == null) {
 			try {
 				f.seek(urlPtrPos + urlIndex * 8);
@@ -286,7 +296,7 @@ public class Zim {
 				e1.printStackTrace();
 				return null;
 			}
-			urlCache.put(urlIndex, e);
+			urlCache1.put(urlIndex, e);
 		}
 		return e;
 	}
@@ -311,8 +321,11 @@ public class Zim {
 
 		// Get the cluster and blob numbers from the article
 		f.seek(clusterPtrPos + e.cluster * 8);
-		long cp;
-		f.seek(cp = leu.readLong());
+		long cp = leu.readLong();
+		if (cp < 0) {
+			System.out.println("urlIndex=" + urlIndex + "clusterPtrPos=" + clusterPtrPos + ",e.cluster=" + e.cluster);
+		}
+		f.seek(cp);
 
 		// Read the first byte, for compression information
 		int compressionType = leu.readByte();
@@ -347,7 +360,7 @@ public class Zim {
 			fin = new FileInputStream(fn);
 			fin.skip(cp + 1);
 			// ins = new SingleXZInputStream(fin, 65640);
-			ins = new XZInputStream(fin);
+			ins = new SingleXZInputStream(fin);
 			ci = new LittleEndianDataInput(new DataInputStream(ins));
 			break;
 		default:
@@ -383,7 +396,7 @@ public class Zim {
 			contentOutput.write(ci.readByte() & 0xff);
 		}
 		contentOutput.flush();
-//		System.out.println("write "+differenceOffset+" bytes");
+		// System.out.println("write "+differenceOffset+" bytes");
 		fin.close();
 		if (ins != null)
 			ins.close();
