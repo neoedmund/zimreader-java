@@ -1,7 +1,6 @@
 package neoe.zim;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
 import java.io.DataInputStream;
 import java.io.FileInputStream;
@@ -302,7 +301,7 @@ public class Zim {
 	}
 
 	public byte[] getContent(int urlIndex) throws IOException {
-		ByteArrayOutputStream ba = new ByteArrayOutputStream();
+		BAOS ba = new BAOS(-1,20<<20);
 		writeContent(ba, urlIndex);
 		return ba.toByteArray();
 	}

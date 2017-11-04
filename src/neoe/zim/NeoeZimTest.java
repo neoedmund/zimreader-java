@@ -6,7 +6,7 @@ import java.util.List;
 public class NeoeZimTest {
 
 	public static void main(String[] args) throws Exception {
-		
+
 		{
 			Zim zim = new Zim("D:\\10h\\wikipedia_en_all_2016-12.zim");
 			System.out.println("cnt=" + zim.articleCount);
@@ -23,7 +23,7 @@ public class NeoeZimTest {
 
 			String key = "Java";
 			System.out.println("---search by title  `" + key + "` ---");
-//			Zim.debugEntry = true;
+			// Zim.debugEntry = true;
 
 			int pos = zim.findTitlePos(key);
 			System.out.println("found pos=" + pos);
